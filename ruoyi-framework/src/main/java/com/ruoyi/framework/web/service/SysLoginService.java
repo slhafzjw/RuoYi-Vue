@@ -30,7 +30,7 @@ import com.ruoyi.system.service.ISysUserService;
 
 /**
  * 登录校验方法
- * 
+ *
  * @author ruoyi
  */
 @Component
@@ -44,7 +44,7 @@ public class SysLoginService
 
     @Autowired
     private RedisCache redisCache;
-    
+
     @Autowired
     private ISysUserService userService;
 
@@ -53,7 +53,7 @@ public class SysLoginService
 
     /**
      * 登录验证
-     * 
+     *
      * @param username 用户名
      * @param password 密码
      * @param code 验证码
@@ -73,6 +73,16 @@ public class SysLoginService
             UsernamePasswordAuthenticationToken authenticationToken = new UsernamePasswordAuthenticationToken(username, password);
             AuthenticationContextHolder.setContext(authenticationToken);
             // 该方法会去调用UserDetailsServiceImpl.loadUserByUsername
+            /*
+            ASK AuthenticationManager 认证流程？
+            ANSWER
+                借助调试可以看到，authenticationManager.getClass() 看到的类型实际为 ProviderManager
+                而在 ProviderManaer 中可以看到存在一个 DaoAuthenticationProvider
+                翻阅源码(至 AbstractDaoAuthenticationConfigurer 处)可以得知，DaoAuthenticationProvider 为 UserDetails 方式下的默认 Provider
+                Provider 在构造时通过构造方法注入 UserDetailsService
+                DaoAuthenticationProvider 继承自 AbstractUserDetailsAuthenticationProvider，实现模板方法
+                父类提供完整的 authenticate 流程，返回 Authentication
+             */
             authentication = authenticationManager.authenticate(authenticationToken);
         }
         catch (Exception e)
@@ -96,12 +106,24 @@ public class SysLoginService
         LoginUser loginUser = (LoginUser) authentication.getPrincipal();
         recordLoginInfo(loginUser.getUserId());
         // 生成token
+        /*
+        ASK 为什么将 Token 独立为另一个 Service ?
+        ANSWER
+            若依将‘登录’这一功能进行了拆分
+            由多个独立的领域(Token、Captcha、Async异步审计日志、AuthenticationManager)组成
+            Token 的生命周期，远大于“登录”这一个动作。
+            TokenService 要处理的事情包括：生成、刷新、校验、续期、失效、踢人
+            如果它写死在 login 里：
+                无法支持刷新 token
+                无法支持多端登录
+                无法支持强制下线
+         */
         return tokenService.createToken(loginUser);
     }
 
     /**
      * 校验验证码
-     * 
+     *
      * @param username 用户名
      * @param code 验证码
      * @param uuid 唯一标识
@@ -113,10 +135,20 @@ public class SysLoginService
         if (captchaEnabled)
         {
             String verifyKey = CacheConstants.CAPTCHA_CODE_KEY + StringUtils.nvl(uuid, "");
+            /*
+            ASK redis 中的验证码在哪里被放入？
+            ANSWER
+                起初以为这些和 Spring Security 的认证体系相关
+                但后来发现实际上存在一个 CaptchaController
+                在那里生成验证码时，captcha 就已经被放到 redis 缓存中
+                这是登录前的人机校验/风控逻辑，与 AuthenticationManager 无关
+             */
             String captcha = redisCache.getCacheObject(verifyKey);
             if (captcha == null)
             {
+                //TODO 异步任务如何执行，它的调度方式有哪些？
                 AsyncManager.me().execute(AsyncFactory.recordLogininfor(username, Constants.LOGIN_FAIL, MessageUtils.message("user.jcaptcha.expire")));
+                //TODO 异常处理机制与异常体系？
                 throw new CaptchaExpireException();
             }
             redisCache.deleteObject(verifyKey);
@@ -157,6 +189,7 @@ public class SysLoginService
         }
         // IP黑名单校验
         String blackStr = configService.selectConfigByKey("sys.login.blackIPList");
+        //TODO IP如何获取？
         if (IpUtils.isMatchedIp(blackStr, IpUtils.getIpAddr()))
         {
             AsyncManager.me().execute(AsyncFactory.recordLogininfor(username, Constants.LOGIN_FAIL, MessageUtils.message("login.blocked")));
