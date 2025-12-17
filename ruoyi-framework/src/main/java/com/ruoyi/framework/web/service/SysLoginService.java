@@ -146,7 +146,26 @@ public class SysLoginService
             String captcha = redisCache.getCacheObject(verifyKey);
             if (captcha == null)
             {
-                //TODO 异步任务如何执行，它的调度方式有哪些？
+                /*
+                ASK 异步任务机制与细节
+                ANSWER
+                    若依中，该异步体系主要针对异步日志的记录使用
+                    AsyncManager
+                        使用单例模式，类型加载时即进行实例化，通过`me()`方法获取实例;
+                        借助 SpringUtils 获取 ScheduledExecutorService, 用于后续执行异步任务;
+                        内部设有 10ms 延迟，可避免任务立即被调度从而与当前请求线程争夺 CPU, 高负载时可推迟日志任务带来的负载进行削峰
+                    AsyncFactory
+                        用于生产异步任务（主要是异步日志）;
+                        当前返回值为 TimerTask，但现在看来似乎是没有必要的
+                        除了语义那一层存在关联外，TimerTask 中除了继承自 Runnable 接口实现的 run 方法外，剩余的字段似乎都没有使用
+                        内部调用的 ServletUtils 封装了 RequestContextHolder 来获取必要的请求信息
+                        后者又用到了 ThreadLocal, 所以‘通过 ServletUtils 获取请求信息’只在请求线程可用
+
+                    本来对 AsyncFactory 直接通过 SpringUtils 拿取 ISysLogininforService 记录日志存在‘越界’相关的疑问
+                    但考虑到这部分异步日志处理，也的确要用到 ISysLogininforService 相关的逻辑
+                    如果独立为类似 AsyncLogService 虽说看起来似乎免除了这种‘越界’，但实际上却多了一个不存在、难以解释的业务领域
+                    而引入其他方式（如事件发布等）也确实抽象过多。这样看它的实现应该算是一次工程妥协吧。
+                 */
                 AsyncManager.me().execute(AsyncFactory.recordLogininfor(username, Constants.LOGIN_FAIL, MessageUtils.message("user.jcaptcha.expire")));
                 /*
                 ASK 异常处理体系
