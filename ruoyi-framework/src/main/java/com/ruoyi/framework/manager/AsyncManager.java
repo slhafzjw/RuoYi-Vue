@@ -23,6 +23,9 @@ public class AsyncManager
      */
     private ScheduledExecutorService executor = SpringUtils.getBean("scheduledExecutorService");
 
+    /*
+    NOTE 这种单例模式确实方便啊，Partner那边的双重锁定真没必要了
+     */
     /**
      * 单例模式
      */
